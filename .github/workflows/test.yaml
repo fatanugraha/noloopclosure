@@ -3,7 +3,7 @@ name: Run Tests
 on: [push]
 
 jobs:
-  tuild:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
