@@ -54,6 +54,11 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	return nil, nil
 }
 
+type issue struct {
+	pos     token.Pos
+	varName string
+}
+
 func getRangeStmtLoopVars(pass *analysis.Pass, stmt *ast.RangeStmt) []types.Object {
 	var loopVars []types.Object
 	if val := stmt.Value; val != nil {
@@ -78,11 +83,6 @@ func getForStmtLoopVars(pass *analysis.Pass, stmt *ast.ForStmt) []types.Object {
 	}
 
 	return loopVars
-}
-
-type issue struct {
-	pos     token.Pos
-	varName string
 }
 
 func getIssues(pass *analysis.Pass, loopVarObjs []types.Object, body *ast.BlockStmt) []issue {
