@@ -1,7 +1,7 @@
 
-# noloopclosure
-
 ![test status](https://github.com/fatanugraha/noloopclosure/actions/workflows/test.yaml/badge.svg)
+
+# noloopclosure
 
 `noloopclosure` is a linter that disallow reference capture of loop variable inside of a closure.
 
