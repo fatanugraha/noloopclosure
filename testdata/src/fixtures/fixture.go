@@ -38,6 +38,20 @@ func ForLoop() {
 		}
 	}
 
+	for i := 0; i < 5; i++ {
+		for j := 0; j < 5; j++ {
+			_ = func() {
+				_ = i // want `found captured reference to loop variable inside a closure`
+				_ = j // want `found captured reference to loop variable inside a closure`
+			}
+		}
+
+		var j int
+		_ = func() {
+			_ = j
+		}
+	}
+
 	k := 5
 	for i, j := 0, 0; i < j; i, k = i+1, k+1 {
 		_ = func() {
