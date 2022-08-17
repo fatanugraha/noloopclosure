@@ -1,9 +1,12 @@
 package noloopclosure
 
 import (
+	"flag"
+	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
@@ -14,94 +17,158 @@ var Analyzer = &analysis.Analyzer{
 	Name:     "noloopclosure",
 	Doc:      "noloopclosure is an analyzer that disallow reference capture of loop variable inside of a closure",
 	Run:      run,
+	Flags:    flags(),
 	Requires: []*analysis.Analyzer{inspect.Analyzer},
 }
 
-var errMsgFormat = "found reference to loop variable `%s`. Consider to duplicate variable `%s` before using it inside the function closure."
+var errMsgFormat = "found captured reference to loop variable inside a closure"
 
-func run(pass *analysis.Pass) (interface{}, error) {
-	inspector := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
+type analyzerState struct {
+	pass *analysis.Pass
 
-	filter := []ast.Node{(*ast.ForStmt)(nil), (*ast.RangeStmt)(nil)}
-	inspector.Preorder(filter, func(n ast.Node) {
-		var loopVarObjs []types.Object
-		var body *ast.BlockStmt
-		switch nn := n.(type) {
-		case *ast.RangeStmt:
-			loopVarObjs = getRangeStmtLoopVars(pass, nn)
-			body = nn.Body
-		case *ast.ForStmt:
-			loopVarObjs = getForStmtLoopVars(pass, nn)
-			body = nn.Body
+	loopVars []types.Object
+	issues   map[string]token.Pos
+}
+
+func (state *analyzerState) processRangeStmt(stmt *ast.RangeStmt) {
+	if val := stmt.Value; val != nil {
+		state.markAsLoopVars(val)
+	}
+
+	if key := stmt.Key; key != nil {
+		state.markAsLoopVars(key)
+	}
+}
+
+func (state *analyzerState) processForStmt(stmt *ast.ForStmt) {
+	if stmt.Init != nil {
+		state.processForStmtClause(stmt.Init)
+	}
+
+	if stmt.Post != nil {
+		state.processForStmtClause(stmt.Post)
+	}
+}
+
+func (state *analyzerState) processForStmtClause(clause ast.Stmt) {
+	switch stmt := clause.(type) {
+	case *ast.AssignStmt:
+		for _, lhs := range stmt.Lhs {
+			state.markAsLoopVars(lhs)
 		}
+	case *ast.IncDecStmt:
+		state.markAsLoopVars(stmt.X)
+	}
+}
 
-		if loopVarObjs == nil {
+func (state *analyzerState) markAsLoopVars(expr ast.Expr) {
+	obj := state.pass.TypesInfo.ObjectOf(state.getIdent(expr))
+	if obj == nil {
+		return
+	}
+
+	for _, o := range state.loopVars {
+		if obj == o {
 			return
 		}
-
-		ast.Inspect(body, func(n ast.Node) bool {
-			if flit, ok := n.(*ast.FuncLit); ok {
-				issues := getIssues(pass, loopVarObjs, flit.Body)
-
-				for _, v := range issues {
-					pass.Reportf(v.pos, errMsgFormat, v.varName, v.varName)
-				}
-			}
-			return true
-		})
-	})
-
-	return nil, nil
-}
-
-type issue struct {
-	pos     token.Pos
-	varName string
-}
-
-func getRangeStmtLoopVars(pass *analysis.Pass, stmt *ast.RangeStmt) []types.Object {
-	var loopVars []types.Object
-	if val := stmt.Value; val != nil {
-		loopVars = append(loopVars, pass.TypesInfo.ObjectOf((val.(*ast.Ident))))
 	}
-	if key := stmt.Key; key != nil {
-		loopVars = append(loopVars, pass.TypesInfo.ObjectOf((key.(*ast.Ident))))
-	}
-	return loopVars
 
+	state.loopVars = append(state.loopVars, obj)
 }
 
-func getForStmtLoopVars(pass *analysis.Pass, stmt *ast.ForStmt) []types.Object {
-	assignStmt, ok := stmt.Init.(*ast.AssignStmt)
-	if !ok {
+func (state *analyzerState) getIdent(expr ast.Expr) *ast.Ident {
+	switch ee := expr.(type) {
+	case *ast.ParenExpr:
+		return state.getIdent(ee.X)
+	case *ast.Ident:
+		return ee
+	case *ast.SelectorExpr:
+		return ee.Sel
+	case *ast.IndexExpr:
+		return state.getIdent(ee.X)
+	case *ast.StarExpr:
+		return state.getIdent(ee.X)
+	default:
+		//  Note: if you reach this state, please raise an issue, thanks!
 		return nil
 	}
-
-	var loopVars []types.Object
-	for _, lhs := range assignStmt.Lhs {
-		loopVars = append(loopVars, pass.TypesInfo.ObjectOf(lhs.(*ast.Ident)))
-	}
-
-	return loopVars
 }
 
-func getIssues(pass *analysis.Pass, loopVarObjs []types.Object, body *ast.BlockStmt) []issue {
-	var issues []issue
-
+func (state *analyzerState) processBody(body *ast.BlockStmt) {
 	ast.Inspect(body, func(n ast.Node) bool {
 		ident, ok := n.(*ast.Ident)
 		if !ok {
 			return true
 		}
 
-		for _, loopVarObj := range loopVarObjs {
-			if pass.TypesInfo.ObjectOf(ident) == loopVarObj {
-				issues = append(issues, issue{pos: ident.Pos(), varName: ident.Name})
+		for _, loopVarObj := range state.loopVars {
+			if state.pass.TypesInfo.ObjectOf(ident) == loopVarObj {
+				state.markAsIssue(ident.Pos())
 			}
 		}
 
 		return true
 	})
+}
 
-	return issues
+func (state *analyzerState) markAsIssue(pos token.Pos) {
+	if state.issues == nil {
+		state.issues = map[string]token.Pos{}
+	}
+
+	pp := state.pass.Fset.Position(pos)
+	state.issues[fmt.Sprintf("%s:%d", pp.Filename, pp.Line)] = pos
+}
+
+func isTestFile(filename string) bool {
+	return strings.HasSuffix(filename, "_test.go")
+}
+
+func run(pass *analysis.Pass) (interface{}, error) {
+	// It's a common usecase to ignore tests by default as it's a common place to capture for-loop variables inside
+	// a closure, especially for table-based tests and benchmarks.
+	shouldIncludeTestFiles := pass.Analyzer.Flags.Lookup("t").Value.(flag.Getter).Get().(bool)
+
+	inspector := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
+	filter := []ast.Node{(*ast.ForStmt)(nil), (*ast.RangeStmt)(nil)}
+	inspector.Preorder(filter, func(n ast.Node) {
+		if !shouldIncludeTestFiles && isTestFile(pass.Fset.Position(n.Pos()).Filename) {
+			return
+		}
+
+		state := analyzerState{pass: pass}
+
+		var body *ast.BlockStmt
+		switch nn := n.(type) {
+		case *ast.RangeStmt:
+			state.processRangeStmt(nn)
+			body = nn.Body
+		case *ast.ForStmt:
+			state.processForStmt(nn)
+			body = nn.Body
+		}
+
+		if state.loopVars == nil {
+			return
+		}
+
+		ast.Inspect(body, func(n ast.Node) bool {
+			if flit, ok := n.(*ast.FuncLit); ok {
+				state.processBody(flit.Body)
+			}
+			return true
+		})
+
+		for _, v := range state.issues {
+			pass.Reportf(v, errMsgFormat)
+		}
+	})
+
+	return nil, nil
+}
+
+func flags() flag.FlagSet {
+	flags := flag.NewFlagSet("", flag.ExitOnError)
+	flags.Bool("t", false, "Include checking test files")
+	return *flags
 }
