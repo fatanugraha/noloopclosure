@@ -30,7 +30,14 @@ func ForLoop() {
 	x := struct{ A int }{}
 	for x.A = 0; x.A < 5; x.A++ {
 		_ = func() {
-			fmt.Println(x.A) // want "found reference to loop variable `x.a`. consider to duplicate variable `x.a` before using it inside the function closure."
+			fmt.Println(x.A) // want "found reference to loop variable `A`. Consider to duplicate variable `A` before using it inside the function closure."
+		}
+	}
+
+	y := []int{1, 2, 3}
+	for y[1] = 0; y[1] < 5; y[1]++ {
+		_ = func() {
+			fmt.Println(y[1])
 		}
 	}
 }
@@ -60,7 +67,8 @@ func RangeLoop() {
 	x := struct{ A string }{}
 	for x.A = range map[string]int{} {
 		_ = func() {
-			fmt.Println(x.A) // want "found reference to loop variable `x.a`. consider to duplicate variable `x.a` before using it inside the function closure."
+			fmt.Println(x.A) // want "found reference to loop variable `A`. Consider to duplicate variable `A` before using it inside the function closure."
 		}
 	}
+
 }
