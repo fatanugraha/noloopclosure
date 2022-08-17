@@ -26,6 +26,13 @@ func ForLoop() {
 			fmt.Println(i, j) // want "found reference to loop variable `i`. Consider to duplicate variable `i` before using it inside the function closure." "found reference to loop variable `j`. Consider to duplicate variable `j` before using it inside the function closure."
 		}
 	}
+
+	x := struct{ A int }{}
+	for x.A = 0; x.A < 5; x.A++ {
+		_ = func() {
+			fmt.Println(x.A) // want "found reference to loop variable `x.a`. consider to duplicate variable `x.a` before using it inside the function closure."
+		}
+	}
 }
 
 func RangeLoop() {
@@ -48,5 +55,12 @@ func RangeLoop() {
 	}
 
 	for range map[string]int{} {
+	}
+
+	x := struct{ A string }{}
+	for x.A = range map[string]int{} {
+		_ = func() {
+			fmt.Println(x.A) // want "found reference to loop variable `x.a`. consider to duplicate variable `x.a` before using it inside the function closure."
+		}
 	}
 }
