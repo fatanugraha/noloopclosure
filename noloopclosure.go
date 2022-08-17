@@ -62,10 +62,10 @@ type issue struct {
 func getRangeStmtLoopVars(pass *analysis.Pass, stmt *ast.RangeStmt) []types.Object {
 	var loopVars []types.Object
 	if val := stmt.Value; val != nil {
-		loopVars = append(loopVars, pass.TypesInfo.ObjectOf((val.(*ast.Ident))))
+		loopVars = append(loopVars, pass.TypesInfo.ObjectOf(getIdent(val)))
 	}
 	if key := stmt.Key; key != nil {
-		loopVars = append(loopVars, pass.TypesInfo.ObjectOf((key.(*ast.Ident))))
+		loopVars = append(loopVars, pass.TypesInfo.ObjectOf(getIdent(key)))
 	}
 	return loopVars
 
@@ -79,10 +79,20 @@ func getForStmtLoopVars(pass *analysis.Pass, stmt *ast.ForStmt) []types.Object {
 
 	var loopVars []types.Object
 	for _, lhs := range assignStmt.Lhs {
-		loopVars = append(loopVars, pass.TypesInfo.ObjectOf(lhs.(*ast.Ident)))
+		loopVars = append(loopVars, pass.TypesInfo.ObjectOf(getIdent(lhs)))
 	}
 
 	return loopVars
+}
+
+func getIdent(expr ast.Expr) *ast.Ident {
+	switch ee := expr.(type) {
+	case *ast.Ident:
+		return ee
+	case *ast.SelectorExpr:
+		return ee.Sel
+	}
+	panic("lol")
 }
 
 func getIssues(pass *analysis.Pass, loopVarObjs []types.Object, body *ast.BlockStmt) []issue {
