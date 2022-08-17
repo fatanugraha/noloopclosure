@@ -1,10 +1,12 @@
 package noloopclosure
 
 import (
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
@@ -15,6 +17,7 @@ var Analyzer = &analysis.Analyzer{
 	Name:     "noloopclosure",
 	Doc:      "noloopclosure is an analyzer that disallow reference capture of loop variable inside of a closure",
 	Run:      run,
+	Flags:    flags(),
 	Requires: []*analysis.Analyzer{inspect.Analyzer},
 }
 
@@ -117,11 +120,22 @@ func (state *analyzerState) markAsIssue(pos token.Pos) {
 	state.issues[fmt.Sprintf("%s:%d", pp.Filename, pp.Line)] = pos
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
-	inspector := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
+func isTestFile(filename string) bool {
+	return strings.HasSuffix(filename, "_test.go")
+}
 
+func run(pass *analysis.Pass) (interface{}, error) {
+	// It's a common usecase to ignore tests by default as it's a common place to capture for-loop variables inside
+	// a closure, especially for table-based tests and benchmarks.
+	shouldIncludeTestFiles := pass.Analyzer.Flags.Lookup("t").Value.(flag.Getter).Get().(bool)
+
+	inspector := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 	filter := []ast.Node{(*ast.ForStmt)(nil), (*ast.RangeStmt)(nil)}
 	inspector.Preorder(filter, func(n ast.Node) {
+		if !shouldIncludeTestFiles && isTestFile(pass.Fset.Position(n.Pos()).Filename) {
+			return
+		}
+
 		state := analyzerState{pass: pass}
 
 		var body *ast.BlockStmt
@@ -151,4 +165,10 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	})
 
 	return nil, nil
+}
+
+func flags() flag.FlagSet {
+	flags := flag.NewFlagSet("", flag.ExitOnError)
+	flags.Bool("t", false, "Include checking test files")
+	return *flags
 }
