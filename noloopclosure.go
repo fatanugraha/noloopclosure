@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"regexp"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -120,19 +121,34 @@ func (state *analyzerState) markAsIssue(pos token.Pos) {
 	state.issues[fmt.Sprintf("%s:%d", pp.Filename, pp.Line)] = pos
 }
 
-func isTestFile(filename string) bool {
-	return strings.HasSuffix(filename, "_test.go")
-}
-
 func run(pass *analysis.Pass) (interface{}, error) {
 	// It's a common usecase to ignore tests by default as it's a common place to capture for-loop variables inside
 	// a closure, especially for table-based tests and benchmarks.
-	shouldIncludeTestFiles := pass.Analyzer.Flags.Lookup("t").Value.(flag.Getter).Get().(bool)
+	shouldIncludeTestFiles := pass.Analyzer.Flags.Lookup("include-test").Value.(flag.Getter).Get().(bool)
+
+	// Usually generated files are good to go.
+	shouldIncludeGeneratedFiles := pass.Analyzer.Flags.Lookup("include-generated").Value.(flag.Getter).Get().(bool)
+
+	ignoredFileNames := map[string]struct{}{}
+	for _, file := range pass.Files {
+		filename := pass.Fset.File(file.Pos()).Name()
+
+		if !shouldIncludeTestFiles && isTestFile(filename) {
+			ignoredFileNames[filename] = struct{}{}
+			continue
+		}
+
+		if !shouldIncludeGeneratedFiles && isGeneratedFile(file) {
+			ignoredFileNames[filename] = struct{}{}
+			continue
+		}
+	}
 
 	inspector := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 	filter := []ast.Node{(*ast.ForStmt)(nil), (*ast.RangeStmt)(nil)}
 	inspector.Preorder(filter, func(n ast.Node) {
-		if !shouldIncludeTestFiles && isTestFile(pass.Fset.Position(n.Pos()).Filename) {
+		filename := pass.Fset.Position(n.Pos()).Filename
+		if _, ok := ignoredFileNames[filename]; ok {
 			return
 		}
 
@@ -169,6 +185,23 @@ func run(pass *analysis.Pass) (interface{}, error) {
 
 func flags() flag.FlagSet {
 	flags := flag.NewFlagSet("", flag.ExitOnError)
-	flags.Bool("t", false, "Include checking test files")
+	flags.Bool("include-test", false, "Include checking test files")
+
+	flags.Bool("include-generated", false, "Include checking generated files")
 	return *flags
+}
+
+func isTestFile(filename string) bool {
+	return strings.HasSuffix(filename, "_test.go")
+}
+
+// https://pkg.go.dev/cmd/go#hdr-Generate_Go_files_by_processing_source
+var generatedPattern = regexp.MustCompile("^// Code generated .* DO NOT EDIT\\.$")
+
+func isGeneratedFile(f *ast.File) bool {
+	if len(f.Comments) == 0 {
+		return false
+	}
+
+	return generatedPattern.MatchString(f.Comments[0].List[0].Text)
 }
