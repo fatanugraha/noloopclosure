@@ -196,7 +196,7 @@ func isTestFile(filename string) bool {
 }
 
 // https://pkg.go.dev/cmd/go#hdr-Generate_Go_files_by_processing_source
-var generatedPattern = regexp.MustCompile("^// Code generated .* DO NOT EDIT\\.$")
+var generatedPattern = regexp.MustCompile(`^// Code generated .* DO NOT EDIT\.$`)
 
 func isGeneratedFile(f *ast.File) bool {
 	if len(f.Comments) == 0 {
